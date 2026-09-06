@@ -15,8 +15,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.net.InetAddress
-import java.net.UnknownHostException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -48,20 +46,21 @@ class VpnManagerImpl @Inject constructor(
         localProxyServer.start()
 
         tunnelJob = managerScope.launch {
-            val result = tun2SocksAdapter.start(
+            val started = tun2SocksAdapter.start(
                 fd = tun.fd,
-                vpnIp = ipToInt(Constants.VPN_ADDRESS),
-                vpnPrefix = Constants.VPN_ADDRESS_PREFIX_LENGTH,
-                proxyIp = Constants.PROXY_HOST,
-                proxyPort = Constants.PROXY_PORT
+                mtu = Constants.VPN_MTU,
+                ipv4 = Constants.VPN_ADDRESS,
+                ipv6 = "",
+                socks5Addr = Constants.PROXY_HOST,
+                socks5Port = Constants.PROXY_PORT
             )
-            if (result == 0) {
+            if (started) {
                 Log.i(TAG, "tun2socks started on fd ${tun.fd}")
             } else {
                 Log.w(
                     TAG,
-                    "tun2socks did not start (result=$result); TUN traffic is not routed. " +
-                        "Drop libtun2socks.so into app/src/main/jniLibs/<abi>/."
+                    "tun2socks did not start; TUN traffic is not routed. " +
+                        "Run ./setup-native.sh to install the native library."
                 )
             }
         }
@@ -81,16 +80,6 @@ class VpnManagerImpl @Inject constructor(
             _vpnState.value = VpnState.Idle
         }
     }
-
-    private fun ipToInt(ip: String): Int =
-        try {
-            InetAddress.getByName(ip).address.fold(0) { acc, byte ->
-                (acc shl 8) or (byte.toInt() and 0xFF)
-            }
-        } catch (e: UnknownHostException) {
-            Log.w(TAG, "Failed to parse IP address '$ip'")
-            0
-        }
 
     private companion object {
         const val TAG = "TetherVaultVpn"

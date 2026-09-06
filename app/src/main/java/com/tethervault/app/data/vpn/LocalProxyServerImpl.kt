@@ -13,11 +13,15 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
+import java.io.IOException
+import java.io.InputStream
 import java.io.InputStreamReader
+import java.io.OutputStream
 import java.io.PrintWriter
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
+import java.io.PushbackInputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -68,8 +72,14 @@ class LocalProxyServerImpl @Inject constructor(
     private suspend fun handleClient(client: Socket) {
         try {
             client.soTimeout = SOCKET_TIMEOUT_MS
-            val reader = BufferedReader(InputStreamReader(client.getInputStream()))
-            val writer = PrintWriter(client.getOutputStream(), false)
+            val pushbackInput =
+                PushbackInputStream(client.getInputStream(), SOCKS5_GREETING_SIZE)
+            val rawOutput = client.getOutputStream()
+
+            performSocks5Handshake(pushbackInput, rawOutput)
+
+            val reader = BufferedReader(InputStreamReader(pushbackInput))
+            val writer = PrintWriter(rawOutput, false)
 
             val requestLine = reader.readLine() ?: return
             val clientIp = client.inetAddress.hostAddress ?: "unknown"
@@ -115,6 +125,43 @@ class LocalProxyServerImpl @Inject constructor(
         } finally {
             runCatching { client.close() }
         }
+    }
+
+    // hev-socks5-tunnel forwards TUN traffic as SOCKS5 connections, so the
+    // handshake must complete before any HTTP payload can be read. Plain
+    // HTTP clients (no SOCKS5 byte) get their bytes pushed back and fall
+    // through to the captive portal handling.
+    private fun performSocks5Handshake(input: PushbackInputStream, output: OutputStream) {
+        val greeting = ByteArray(SOCKS5_GREETING_SIZE)
+        val greetingLength = readFully(input, greeting)
+        if (greetingLength < 0 || greeting[0] != SOCKS5_VERSION) {
+            input.unread(greeting, 0, maxOf(greetingLength, 0))
+            return
+        }
+        // Method selection reply: no authentication required.
+        output.write(byteArrayOf(SOCKS5_VERSION, NO_AUTH_REQUIRED))
+        output.flush()
+
+        // SOCKS5 request (VER CMD RSV ATYP ADDR PORT) — 10 bytes for IPv4.
+        val request = ByteArray(SOCKS5_REQUEST_SIZE)
+        readFully(input, request)
+
+        // Reply: succeeded, bound address 0.0.0.0:0.
+        output.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
+        output.flush()
+    }
+
+    private fun readFully(input: InputStream, buffer: ByteArray): Int {
+        var read = 0
+        while (read < buffer.size) {
+            val count = input.read(buffer, read, buffer.size - read)
+            if (count < 0) {
+                if (read == 0) return -1
+                throw IOException("Connection closed mid-read")
+            }
+            read += count
+        }
+        return read
     }
 
     private fun readHeaders(reader: BufferedReader): Int {
@@ -169,6 +216,10 @@ class LocalProxyServerImpl @Inject constructor(
     private companion object {
         const val TAG = "TetherVaultProxy"
         const val SOCKET_TIMEOUT_MS = 3000
+        const val SOCKS5_VERSION: Byte = 0x05
+        const val NO_AUTH_REQUIRED: Byte = 0x00
+        const val SOCKS5_GREETING_SIZE = 3
+        const val SOCKS5_REQUEST_SIZE = 10
         const val LOGIN_HTML =
             "<html><body><h1>TetherVault Login</h1>" +
                 "<form method='POST' action='/login'>" +
