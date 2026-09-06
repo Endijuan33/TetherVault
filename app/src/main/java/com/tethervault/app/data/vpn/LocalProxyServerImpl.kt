@@ -9,8 +9,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.IOException
@@ -18,10 +20,12 @@ import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.OutputStream
 import java.io.PrintWriter
+import java.io.PushbackInputStream
+import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
-import java.io.PushbackInputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -37,6 +41,12 @@ class LocalProxyServerImpl @Inject constructor(
 
     private var serverJob: Job? = null
     private var serverSocket: ServerSocket? = null
+
+    private data class Socks5Request(
+        val command: Byte,
+        val destinationAddress: String,
+        val destinationPort: Int
+    )
 
     override fun start() {
         if (serverJob?.isActive == true) return
@@ -70,85 +80,191 @@ class LocalProxyServerImpl @Inject constructor(
     }
 
     private suspend fun handleClient(client: Socket) {
+        var remote: Socket? = null
         try {
             client.soTimeout = SOCKET_TIMEOUT_MS
             val pushbackInput =
                 PushbackInputStream(client.getInputStream(), SOCKS5_GREETING_SIZE)
             val rawOutput = client.getOutputStream()
 
-            performSocks5Handshake(pushbackInput, rawOutput)
+            val greeting = ByteArray(SOCKS5_GREETING_SIZE)
+            val greetingLength = readFully(pushbackInput, greeting)
+            if (greetingLength < 0 || greeting[0] != SOCKS5_VERSION) {
+                // Plain HTTP client (no SOCKS5): serve the captive portal.
+                pushbackInput.unread(greeting, 0, maxOf(greetingLength, 0))
+                serveCaptivePortal(pushbackInput, rawOutput, client)
+                return
+            }
 
-            val reader = BufferedReader(InputStreamReader(pushbackInput))
-            val writer = PrintWriter(rawOutput, false)
+            // Method selection reply: no authentication required.
+            rawOutput.write(byteArrayOf(SOCKS5_VERSION, NO_AUTH_REQUIRED))
+            rawOutput.flush()
 
-            val requestLine = reader.readLine() ?: return
+            val request = parseSocks5Request(pushbackInput)
+
+            if (request == null) {
+                writeSocks5Reply(rawOutput, REPLY_GENERAL_FAILURE)
+                return
+            }
+
             val clientIp = client.inetAddress.hostAddress ?: "unknown"
-
-            val requestParts = requestLine.split(" ")
-            val method = requestParts.getOrNull(0).orEmpty()
-            val path = requestParts.getOrNull(1).orEmpty()
-
-            val contentLength = readHeaders(reader)
-
             val device = connectedDeviceRepository.findByIpAddress(clientIp)
             val isAuthenticated = device?.isAuthenticated == true
 
-            when {
-                isAuthenticated -> writeOk(
-                    writer = writer,
-                    contentType = "text/plain",
-                    body = "Internet Access Granted (Placeholder for actual proxy forwarding)"
-                )
-
-                method == "POST" && path == "/login" -> {
-                    val body = readBody(reader, contentLength)
-                    val voucherCode = parseFormValue(body, "voucher")
-                    val authenticated = voucherCode != null &&
-                        authenticateDeviceUseCase(
-                            ipAddress = clientIp,
-                            voucherCode = voucherCode
-                        ).isSuccess
-                    if (authenticated) {
-                        writeRedirect(writer, "/success")
-                    } else {
-                        writeRedirect(writer, "/?error=1")
-                    }
-                }
-
-                method == "GET" && path == "/success" ->
-                    writeOk(writer, "text/html", SUCCESS_HTML)
-
-                else -> writeOk(writer, "text/html", LOGIN_HTML)
+            if (!isAuthenticated) {
+                // Pretend the tunnel is up so the SOCKS5 client sends its
+                // HTTP payload, which the captive portal then answers.
+                writeSocks5Reply(rawOutput, REPLY_SUCCEEDED)
+                serveCaptivePortal(pushbackInput, rawOutput, client)
+                return
             }
+
+            if (request.command != SOCKS5_CMD_CONNECT) {
+                writeSocks5Reply(rawOutput, REPLY_COMMAND_NOT_SUPPORTED)
+                return
+            }
+
+            val remoteSocket = try {
+                Socket().apply {
+                    connect(
+                        InetSocketAddress(request.destinationAddress, request.destinationPort),
+                        REMOTE_CONNECT_TIMEOUT_MS
+                    )
+                }
+            } catch (e: IOException) {
+                Log.w(
+                    TAG,
+                    "Failed to connect to ${request.destinationAddress}:${request.destinationPort}: ${e.message}"
+                )
+                writeSocks5Reply(rawOutput, REPLY_GENERAL_FAILURE)
+                return
+            }
+            remote = remoteSocket
+
+            writeSocks5Reply(rawOutput, REPLY_SUCCEEDED)
+
+            // Long-lived tunnel: the handshake read timeout would kill
+            // idle connections, so disable it before piping.
+            client.soTimeout = 0
+
+            pipeBidirectionally(pushbackInput, rawOutput, remoteSocket)
         } catch (e: Exception) {
             Log.w(TAG, "Client handling failed: ${e.message}")
         } finally {
+            runCatching { remote?.close() }
             runCatching { client.close() }
         }
     }
 
-    // hev-socks5-tunnel forwards TUN traffic as SOCKS5 connections, so the
-    // handshake must complete before any HTTP payload can be read. Plain
-    // HTTP clients (no SOCKS5 byte) get their bytes pushed back and fall
-    // through to the captive portal handling.
-    private fun performSocks5Handshake(input: PushbackInputStream, output: OutputStream) {
-        val greeting = ByteArray(SOCKS5_GREETING_SIZE)
-        val greetingLength = readFully(input, greeting)
-        if (greetingLength < 0 || greeting[0] != SOCKS5_VERSION) {
-            input.unread(greeting, 0, maxOf(greetingLength, 0))
-            return
+    private suspend fun pipeBidirectionally(
+        clientInput: InputStream,
+        clientOutput: OutputStream,
+        remote: Socket
+    ) = coroutineScope {
+        val uploads = launch { clientInput.copyTo(remote.getOutputStream()) }
+        val downloads = launch { remote.getInputStream().copyTo(clientOutput) }
+        joinAll(uploads, downloads)
+    }
+
+    // SOCKS5 connection request: VER(1) CMD(1) RSV(1) ATYP(1)
+    // DST.ADDR(var) DST.PORT(2).
+    private fun parseSocks5Request(input: InputStream): Socks5Request? {
+        val header = ByteArray(SOCKS5_REQUEST_HEADER_SIZE)
+        if (readFully(input, header) < 0) return null
+        if (header[0] != SOCKS5_VERSION) return null
+        val command = header[1]
+        val addressType = header[3]
+
+        val address: String = when (addressType) {
+            ADDRESS_TYPE_IPV4 -> {
+                val bytes = ByteArray(4)
+                if (readFully(input, bytes) < 0) return null
+                bytes.joinToString(".") { (it.toInt() and 0xFF).toString() }
+            }
+
+            ADDRESS_TYPE_DOMAIN -> {
+                val lengthBytes = ByteArray(1)
+                if (readFully(input, lengthBytes) < 0) return null
+                val length = lengthBytes[0].toInt() and 0xFF
+                if (length == 0) return null
+                val bytes = ByteArray(length)
+                if (readFully(input, bytes) < 0) return null
+                String(bytes, Charsets.US_ASCII)
+            }
+
+            ADDRESS_TYPE_IPV6 -> {
+                val bytes = ByteArray(16)
+                if (readFully(input, bytes) < 0) return null
+                InetAddress.getByAddress(bytes).hostAddress ?: return null
+            }
+
+            else -> return null
         }
-        // Method selection reply: no authentication required.
-        output.write(byteArrayOf(SOCKS5_VERSION, NO_AUTH_REQUIRED))
-        output.flush()
 
-        // SOCKS5 request (VER CMD RSV ATYP ADDR PORT) — 10 bytes for IPv4.
-        val request = ByteArray(SOCKS5_REQUEST_SIZE)
-        readFully(input, request)
+        val portBytes = ByteArray(2)
+        if (readFully(input, portBytes) < 0) return null
+        val port =
+            ((portBytes[0].toInt() and 0xFF) shl 8) or (portBytes[1].toInt() and 0xFF)
 
-        // Reply: succeeded, bound address 0.0.0.0:0.
-        output.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
+        return Socks5Request(command, address, port)
+    }
+
+    private fun writeSocks5Reply(output: OutputStream, replyCode: Byte) {
+        output.write(
+            byteArrayOf(
+                SOCKS5_VERSION, replyCode, 0x00, ADDRESS_TYPE_IPV4, 0, 0, 0, 0, 0, 0
+            )
+        )
         output.flush()
+    }
+
+    private suspend fun serveCaptivePortal(
+        input: InputStream,
+        output: OutputStream,
+        client: Socket
+    ) {
+        val reader = BufferedReader(InputStreamReader(input))
+        val writer = PrintWriter(output, false)
+
+        val requestLine = reader.readLine() ?: return
+        val clientIp = client.inetAddress.hostAddress ?: "unknown"
+
+        val requestParts = requestLine.split(" ")
+        val method = requestParts.getOrNull(0).orEmpty()
+        val path = requestParts.getOrNull(1).orEmpty()
+
+        val contentLength = readHeaders(reader)
+
+        val device = connectedDeviceRepository.findByIpAddress(clientIp)
+        val isAuthenticated = device?.isAuthenticated == true
+
+        when {
+            isAuthenticated -> writeOk(
+                writer = writer,
+                contentType = "text/plain",
+                body = "Internet Access Granted (Placeholder for actual proxy forwarding)"
+            )
+
+            method == "POST" && path == "/login" -> {
+                val body = readBody(reader, contentLength)
+                val voucherCode = parseFormValue(body, "voucher")
+                val authenticated = voucherCode != null &&
+                    authenticateDeviceUseCase(
+                        ipAddress = clientIp,
+                        voucherCode = voucherCode
+                    ).isSuccess
+                if (authenticated) {
+                    writeRedirect(writer, "/success")
+                } else {
+                    writeRedirect(writer, "/?error=1")
+                }
+            }
+
+            method == "GET" && path == "/success" ->
+                writeOk(writer, "text/html", SUCCESS_HTML)
+
+            else -> writeOk(writer, "text/html", LOGIN_HTML)
+        }
     }
 
     private fun readFully(input: InputStream, buffer: ByteArray): Int {
@@ -216,10 +332,18 @@ class LocalProxyServerImpl @Inject constructor(
     private companion object {
         const val TAG = "TetherVaultProxy"
         const val SOCKET_TIMEOUT_MS = 3000
+        const val REMOTE_CONNECT_TIMEOUT_MS = 10_000
         const val SOCKS5_VERSION: Byte = 0x05
         const val NO_AUTH_REQUIRED: Byte = 0x00
+        const val SOCKS5_CMD_CONNECT: Byte = 0x01
+        const val ADDRESS_TYPE_IPV4: Byte = 0x01
+        const val ADDRESS_TYPE_DOMAIN: Byte = 0x03
+        const val ADDRESS_TYPE_IPV6: Byte = 0x04
+        const val REPLY_SUCCEEDED: Byte = 0x00
+        const val REPLY_GENERAL_FAILURE: Byte = 0x01
+        const val REPLY_COMMAND_NOT_SUPPORTED: Byte = 0x07
         const val SOCKS5_GREETING_SIZE = 3
-        const val SOCKS5_REQUEST_SIZE = 10
+        const val SOCKS5_REQUEST_HEADER_SIZE = 4
         const val LOGIN_HTML =
             "<html><body><h1>TetherVault Login</h1>" +
                 "<form method='POST' action='/login'>" +
