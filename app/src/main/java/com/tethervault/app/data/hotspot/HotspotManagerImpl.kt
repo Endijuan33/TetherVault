@@ -1,18 +1,24 @@
 package com.tethervault.app.data.hotspot
 
 import android.content.Context
+import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pGroup
 import android.net.wifi.p2p.WifiP2pManager
 import android.os.Build
 import android.os.Looper
+import android.util.Log
 import com.tethervault.app.domain.hotspot.HotspotManager
+import com.tethervault.app.domain.model.AppSettings
+import com.tethervault.app.domain.model.HotspotSecurity
 import com.tethervault.app.domain.model.HotspotState
+import com.tethervault.app.domain.repository.SettingsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -24,7 +30,8 @@ import kotlin.coroutines.resumeWithException
 
 @Singleton
 class HotspotManagerImpl @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val settingsRepository: SettingsRepository
 ) : HotspotManager {
 
     private val _hotspotState = MutableStateFlow<HotspotState>(HotspotState.Idle)
@@ -48,13 +55,15 @@ class HotspotManagerImpl @Inject constructor(
                 return
             }
 
+            val settings = settingsRepository.observeSettings().first()
+
             _hotspotState.value = HotspotState.Starting
             try {
                 withContext(Dispatchers.Main) {
                     val channel = createChannel(manager)
                     currentChannel = channel
 
-                    createGroup(manager, channel)
+                    createGroup(manager, channel, settings)
 
                     val group = awaitGroupInfo(manager, channel)
                     if (group == null) {
@@ -70,7 +79,7 @@ class HotspotManagerImpl @Inject constructor(
                     } else {
                         _hotspotState.value = HotspotState.Running(
                             ssid = group.networkName ?: "DIRECT-unknown",
-                            password = group.passphrase.orEmpty()
+                            password = group.passphrase
                         )
                     }
                 }
@@ -116,10 +125,11 @@ class HotspotManagerImpl @Inject constructor(
 
     private suspend fun createGroup(
         manager: WifiP2pManager,
-        channel: WifiP2pManager.Channel
+        channel: WifiP2pManager.Channel,
+        settings: AppSettings
     ) {
         suspendCancellableCoroutine { cont ->
-            manager.createGroup(channel, object : WifiP2pManager.ActionListener {
+            val listener = object : WifiP2pManager.ActionListener {
                 override fun onSuccess() {
                     cont.resume(Unit)
                 }
@@ -129,8 +139,38 @@ class HotspotManagerImpl @Inject constructor(
                         IllegalStateException("createGroup failed with reason $reason")
                     )
                 }
-            })
+            }
+            val config = buildGroupConfig(settings)
+            if (config != null) {
+                manager.createGroup(channel, config, listener)
+            } else {
+                manager.createGroup(channel, listener)
+            }
         }
+    }
+
+    // Wi-Fi Direct group creation with a custom SSID/passphrase requires
+    // WifiP2pConfig.Builder (API 29+); older devices fall back to the
+    // system-generated group. Wi-Fi Direct groups are always WPA2-PSK per
+    // the P2P specification, so OPEN mode substitutes a well-known public
+    // passphrase: joining requires no secret and the voucher portal stays
+    // the only real gate to the internet.
+    private fun buildGroupConfig(settings: AppSettings): WifiP2pConfig? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            Log.i(
+                TAG,
+                "Custom hotspot settings require Android 10+; using system defaults"
+            )
+            return null
+        }
+        val passphrase = when (settings.hotspotSecurity) {
+            HotspotSecurity.OPEN -> PUBLIC_PASSPHRASE
+            HotspotSecurity.WPA2_PSK -> settings.hotspotPassphrase
+        }
+        return WifiP2pConfig.Builder()
+            .setNetworkName(settings.hotspotSsid)
+            .setPassphrase(passphrase)
+            .build()
     }
 
     // Group information may not be available immediately after createGroup succeeds,
@@ -154,7 +194,9 @@ class HotspotManagerImpl @Inject constructor(
     }
 
     private companion object {
+        const val TAG = "TetherVaultHotspot"
         const val GROUP_INFO_ATTEMPTS = 10
         const val GROUP_INFO_RETRY_DELAY_MS = 500L
+        const val PUBLIC_PASSPHRASE = "tethervault"
     }
 }

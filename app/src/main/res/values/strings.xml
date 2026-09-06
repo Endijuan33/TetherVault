@@ -15,6 +15,8 @@
     <string name="home_action_stop">Stop Hotspot</string>
     <string name="home_ssid_label">SSID (Network Name)</string>
     <string name="home_password_label">Password</string>
+    <string name="home_open_network">Open network</string>
+    <string name="home_voucher_hint">Internet access requires a valid voucher.</string>
     <string name="home_permissions_required">Required permissions must be granted before the hotspot can be started. Tap the button to request them.</string>
     <string name="home_action_start_vpn">Start VPN</string>
     <string name="home_action_stop_vpn">Stop VPN</string>
@@ -51,6 +53,19 @@
     <string name="action_cancel">Cancel</string>
 
     <string name="settings_title">Settings</string>
+    <string name="settings_hotspot_section">Hotspot Configuration</string>
+    <string name="settings_ssid_label">SSID (network name)</string>
+    <string name="settings_ssid_support">The DIRECT- prefix required by Wi-Fi Direct is added automatically.</string>
+    <string name="settings_security_label">Security</string>
+    <string name="settings_security_open">Open</string>
+    <string name="settings_security_wpa2">WPA2/WPA3-PSK</string>
+    <string name="settings_passphrase_label">Passphrase</string>
+    <string name="settings_passphrase_support">8–63 characters</string>
+    <string name="settings_open_hint">Anyone may join without a secret; internet access still requires a voucher. Wi-Fi Direct networks are always WPA2-encrypted, so a public password is applied automatically.</string>
+    <string name="settings_save">Save hotspot settings</string>
+    <string name="settings_saved">Hotspot settings saved. Restart the hotspot to apply.</string>
+    <string name="settings_save_failed">Failed to save settings</string>
+    <string name="settings_apply_hint">Changes apply the next time the hotspot is started.</string>
     <string name="access_log_title">Access Log</string>
     <string name="access_log_empty_title">No activity yet</string>
     <string name="access_log_empty_subtitle">Login and revocation events will appear here.</string>

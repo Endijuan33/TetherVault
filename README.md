@@ -5,7 +5,7 @@
 ## Features
 
 ### Implemented
-- **Wi-Fi Direct Hotspot** — creates an autonomous Wi-Fi Direct group (Group Owner mode) and surfaces the system-generated SSID & passphrase in the UI.
+- **Configurable Hotspot** — the SSID and security mode (Open or WPA2/WPA3-PSK) are configurable in the Settings tab and persisted with DataStore. In Open mode the network effectively joins without a secret, making the voucher portal the only gate to the internet (Wi-Fi Direct mandates WPA2 on the radio, so a public passphrase is applied transparently). Changes apply on the next hotspot start.
 - **Persistent Foreground Service** — the hotspot runs inside a stable foreground service (`connectedDevice` type) with a persistent notification and a **Stop Hotspot** action button.
 - **VPN / TUN Interface** — an `android.net.VpnService` captures device traffic into a TUN interface (`10.0.0.2/24`, default route, DNS `8.8.8.8`, MTU 1500).
 - **Native Routing (hev-socks5-tunnel)** — the library is compiled from source with the Android NDK by CI; the Kotlin bridge (`TProxyStartService`/`TProxyStopService`) starts the tunnel via a generated YAML config and routes TUN traffic to the local proxy as SOCKS5.
@@ -55,7 +55,7 @@ Cross-cutting concerns are wired with **Hilt** dependency injection. The hotspot
 | UI | Jetpack Compose (BOM 2025.06.01), Material 3 with dynamic color |
 | Navigation | Navigation Compose 2.9.0 |
 | DI | Hilt 2.56.2 |
-| Database | Room 2.7.1 (KSP) |
+| Database | Room 2.7.1 (KSP), DataStore (settings) |
 | Async | Kotlin Coroutines + Flow |
 | Networking | `WifiP2pManager`, `VpnService`, raw `java.io` sockets, hev-socks5-tunnel (NDK) |
 | Build | AGP 8.10.1, Gradle 8.14.2, Version Catalog, R8/ProGuard |
@@ -88,7 +88,7 @@ app/src/main/java/
     │   ├── main/                        # MainActivity, Home (hotspot + VPN controls, permissions)
     │   ├── devices/                     # Device list, revoke + confirmation, byte usage
     │   ├── vouchers/                    # Voucher list, duration dialog, copy, delete
-    │   ├── settings/                    # Access Log history list
+    │   ├── settings/                    # Hotspot configuration + Access Log history
     │   ├── components/                  # Shared composables (EmptyState)
     │   ├── navigation/                  # Bottom navigation destinations
     │   └── theme/                       # Material 3 theme
@@ -137,7 +137,7 @@ Keystores and `keystore.properties` are gitignored.
 
 ### How It Works
 
-1. **Home → Start Hotspot** — requests runtime permissions (nearby devices / notifications on Android 13+, location below), starts the foreground service, and creates the Wi-Fi Direct group. SSID & password appear on screen.
+1. **Home → Start Hotspot** — requests runtime permissions (nearby devices / notifications on Android 13+, location below), starts the foreground service, and creates the Wi-Fi Direct group using the SSID/passphrase/security configured in Settings (custom credentials require Android 10+; older devices fall back to system-generated values). SSID and password (or an "Open network" badge) appear on screen.
 2. **Home → Start VPN** — triggers the system VPN consent dialog (`VpnService.prepare`), then establishes the TUN interface, starts the local proxy server, writes `tun2socks_config.yaml`, and launches the native tunnel.
 3. **Client connects** — traffic arrives at the local proxy as SOCKS5. Unauthenticated clients receive a SOCKS5 success reply so their HTTP payload surfaces, and the captive portal answers with the TetherVault login form.
 4. **Voucher login** — the client submits a voucher code; it is validated against Room (exists, unused, unexpired). On success the voucher is marked used, the client's MAC is resolved from `/proc/net/arp` (fallback `unknown:<ip>`), and the device becomes authenticated — recorded as a LOGIN access log entry.

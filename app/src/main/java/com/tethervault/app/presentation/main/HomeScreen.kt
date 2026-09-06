@@ -228,15 +228,30 @@ private fun CredentialsCard(state: HotspotState.Running) {
                 fontWeight = FontWeight.Bold
             )
             Spacer(Modifier.height(12.dp))
+            if (state.password != null) {
+                Text(
+                    text = stringResource(R.string.home_password_label),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = state.password,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            } else {
+                Text(
+                    text = stringResource(R.string.home_open_network),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(Modifier.height(16.dp))
             Text(
-                text = stringResource(R.string.home_password_label),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                text = state.password,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
+                text = stringResource(R.string.home_voucher_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
             )
         }
     }
