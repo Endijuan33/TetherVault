@@ -50,8 +50,6 @@ class VpnManagerImpl @Inject constructor(
                 fd = tun.fd,
                 mtu = Constants.VPN_MTU,
                 ipv4 = Constants.VPN_ADDRESS,
-                ipv6 = "",
-                socks5Addr = Constants.PROXY_HOST,
                 socks5Port = Constants.PROXY_PORT
             )
             if (started) {
