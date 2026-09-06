@@ -5,6 +5,7 @@ import com.tethervault.app.domain.repository.ConnectedDeviceRepository
 import com.tethervault.app.domain.usecase.AuthenticateDeviceUseCase
 import com.tethervault.app.domain.vpn.LocalProxyServer
 import com.tethervault.app.util.Constants
+import com.tethervault.app.util.P2pAddressResolver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -239,11 +240,7 @@ class LocalProxyServerImpl @Inject constructor(
         val isAuthenticated = device?.isAuthenticated == true
 
         when {
-            isAuthenticated -> writeOk(
-                writer = writer,
-                contentType = "text/plain",
-                body = "Internet Access Granted (Placeholder for actual proxy forwarding)"
-            )
+            isAuthenticated -> writeOk(writer, "text/html", SUCCESS_HTML)
 
             method == "POST" && path == "/login" -> {
                 val body = readBody(reader, contentLength)
@@ -263,8 +260,26 @@ class LocalProxyServerImpl @Inject constructor(
             method == "GET" && path == "/success" ->
                 writeOk(writer, "text/html", SUCCESS_HTML)
 
-            else -> writeOk(writer, "text/html", LOGIN_HTML)
+            method == "GET" && path == "/portal" ->
+                writeOk(writer, "text/html", buildLoginHtml())
+
+            else -> {
+                // Captive-portal probe (any other unauthenticated request):
+                // redirect to the voucher login page on the group owner so
+                // the OS "Sign in to network" / "Login to network" flow
+                // opens the form directly in its captive portal mini-browser.
+                writeRedirect(writer, "${portalBaseUrl()}/portal")
+            }
         }
+    }
+
+    // The portal must be reachable directly (not only through the tunnel):
+    // the group owner's own address is always on the same subnet as the
+    // connected clients.
+    private fun portalBaseUrl(): String {
+        val groupOwnerAddress =
+            P2pAddressResolver.getGroupOwnerAddress() ?: P2pAddressResolver.FALLBACK_GROUP_OWNER_IP
+        return "http://$groupOwnerAddress:$port"
     }
 
     private fun readFully(input: InputStream, buffer: ByteArray): Int {
@@ -317,6 +332,7 @@ class LocalProxyServerImpl @Inject constructor(
         writer.print("HTTP/1.1 200 OK\r\n")
         writer.print("Content-Type: $contentType; charset=utf-8\r\n")
         writer.print("Content-Length: ${bodyBytes.size}\r\n")
+        writer.print("Cache-Control: no-store\r\n")
         writer.print("Connection: close\r\n\r\n")
         writer.print(body)
         writer.flush()
@@ -325,9 +341,26 @@ class LocalProxyServerImpl @Inject constructor(
     private fun writeRedirect(writer: PrintWriter, location: String) {
         writer.print("HTTP/1.1 302 Found\r\n")
         writer.print("Location: $location\r\n")
+        writer.print("Cache-Control: no-store\r\n")
         writer.print("Connection: close\r\n\r\n")
         writer.flush()
     }
+
+    // The login form posts to an absolute URL: captive-portal mini-browsers
+    // may resolve relative paths against the original probe host instead
+    // of the redirected portal host.
+    private fun buildLoginHtml(): String =
+        "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'/>" +
+            "<title>TetherVault Login</title></head>" +
+            "<body style='font-family:sans-serif;text-align:center;padding:40px;'>" +
+            "<h1>TetherVault</h1>" +
+            "<p>Enter your voucher code to access the internet.</p>" +
+            "<form method='POST' action='${portalBaseUrl()}/login'>" +
+            "<input type='text' name='voucher' placeholder='Voucher Code' required " +
+            "style='font-size:18px;padding:12px;text-align:center;width:80%;'/>" +
+            "<br/><br/>" +
+            "<button type='submit' style='font-size:18px;padding:12px 32px;'>Connect</button>" +
+            "</form></body></html>"
 
     private companion object {
         const val TAG = "TetherVaultProxy"
@@ -344,14 +377,11 @@ class LocalProxyServerImpl @Inject constructor(
         const val REPLY_COMMAND_NOT_SUPPORTED: Byte = 0x07
         const val SOCKS5_GREETING_SIZE = 3
         const val SOCKS5_REQUEST_HEADER_SIZE = 4
-        const val LOGIN_HTML =
-            "<html><body><h1>TetherVault Login</h1>" +
-                "<form method='POST' action='/login'>" +
-                "<input type='text' name='voucher' placeholder='Voucher Code' required/>" +
-                "<button type='submit'>Connect</button>" +
-                "</form></body></html>"
         const val SUCCESS_HTML =
-            "<html><body><h1>Connected!</h1>" +
+            "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'/>" +
+                "<title>Connected</title></head>" +
+                "<body style='font-family:sans-serif;text-align:center;padding:40px;'>" +
+                "<h1>Connected!</h1>" +
                 "<p>You can now use the internet.</p></body></html>"
     }
 }
