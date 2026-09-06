@@ -1,13 +1,16 @@
 package com.tethervault.app.domain.usecase
 
+import com.tethervault.app.domain.model.AccessLogAction
 import com.tethervault.app.domain.model.ConnectedDevice
+import com.tethervault.app.domain.repository.AccessLogRepository
 import com.tethervault.app.domain.repository.ConnectedDeviceRepository
 import com.tethervault.app.domain.repository.VoucherRepository
 import javax.inject.Inject
 
 class AuthenticateDeviceUseCase @Inject constructor(
     private val voucherRepository: VoucherRepository,
-    private val connectedDeviceRepository: ConnectedDeviceRepository
+    private val connectedDeviceRepository: ConnectedDeviceRepository,
+    private val accessLogRepository: AccessLogRepository
 ) {
 
     suspend operator fun invoke(ipAddress: String, voucherCode: String): Result<Boolean> {
@@ -39,6 +42,11 @@ class AuthenticateDeviceUseCase @Inject constructor(
             usedByIp = ipAddress
         )
         connectedDeviceRepository.upsert(device)
+        accessLogRepository.log(
+            deviceMac = device.macAddress,
+            action = AccessLogAction.LOGIN,
+            details = "Voucher ${voucher.code} activated from $ipAddress"
+        )
 
         return Result.success(true)
     }

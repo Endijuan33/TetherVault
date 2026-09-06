@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.ConfirmationNumber
@@ -22,6 +24,8 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -39,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -65,6 +70,7 @@ fun VouchersScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var voucherPendingDelete by remember { mutableStateOf<Voucher?>(null) }
+    var showGenerateDialog by remember { mutableStateOf(false) }
 
     fun showSnackbar(messageRes: Int) {
         scope.launch { snackbarHostState.showSnackbar(context.getString(messageRes)) }
@@ -81,12 +87,7 @@ fun VouchersScreen(
         modifier = modifier,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = {
-                    viewModel.generateVoucher()
-                    showSnackbar(R.string.voucher_generated)
-                }
-            ) {
+            FloatingActionButton(onClick = { showGenerateDialog = true }) {
                 Icon(
                     imageVector = Icons.Filled.Add,
                     contentDescription = stringResource(R.string.vouchers_generate)
@@ -150,6 +151,88 @@ fun VouchersScreen(
             }
         )
     }
+
+    if (showGenerateDialog) {
+        GenerateVoucherDialog(
+            onGenerate = { hours ->
+                viewModel.generateVoucher(hours)
+                showGenerateDialog = false
+                showSnackbar(R.string.voucher_generated)
+            },
+            onDismiss = { showGenerateDialog = false }
+        )
+    }
+}
+
+private enum class DurationOption(val hours: Int?, val labelRes: Int) {
+    ONE_HOUR(1, R.string.duration_1_hour),
+    HOURS_24(24, R.string.duration_24_hours),
+    DAYS_7(7 * 24, R.string.duration_7_days),
+    CUSTOM(null, R.string.duration_custom)
+}
+
+@Composable
+private fun GenerateVoucherDialog(
+    onGenerate: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var selectedOption by remember { mutableStateOf(DurationOption.HOURS_24) }
+    var customHours by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.voucher_generate_title)) },
+        text = {
+            Column {
+                DurationOption.entries.forEach { option ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = selectedOption == option,
+                                onClick = { selectedOption = option }
+                            ),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedOption == option,
+                            onClick = { selectedOption = option }
+                        )
+                        Text(text = stringResource(option.labelRes))
+                    }
+                }
+                if (selectedOption == DurationOption.CUSTOM) {
+                    OutlinedTextField(
+                        value = customHours,
+                        onValueChange = { input ->
+                            if (input.all(Char::isDigit)) customHours = input
+                        },
+                        label = { Text(stringResource(R.string.duration_custom_hint)) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val hours = selectedOption.hours ?: customHours.toIntOrNull()
+                    if (hours != null && hours > 0) {
+                        onGenerate(hours)
+                    }
+                }
+            ) {
+                Text(stringResource(R.string.voucher_generate_action))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
 }
 
 private enum class VoucherStatus(val labelRes: Int, val color: Color) {

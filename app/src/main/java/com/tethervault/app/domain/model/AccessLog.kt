@@ -7,3 +7,8 @@ data class AccessLog(
     val action: String,
     val details: String? = null
 )
+
+object AccessLogAction {
+    const val LOGIN = "LOGIN"
+    const val REVOKED = "REVOKED"
+}

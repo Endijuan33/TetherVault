@@ -25,9 +25,9 @@ class VouchersViewModel @Inject constructor(
             initialValue = emptyList()
         )
 
-    fun generateVoucher() {
+    fun generateVoucher(durationHours: Int) {
         viewModelScope.launch {
-            generateVoucherUseCase(DEFAULT_DURATION_HOURS)
+            generateVoucherUseCase(durationHours)
         }
     }
 
@@ -35,9 +35,5 @@ class VouchersViewModel @Inject constructor(
         viewModelScope.launch {
             voucherRepository.deleteById(voucher.id)
         }
-    }
-
-    private companion object {
-        const val DEFAULT_DURATION_HOURS = 24
     }
 }
