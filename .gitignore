@@ -12,3 +12,7 @@ local.properties
 
 # Native libraries are downloaded at build time (CI) or dropped in manually
 app/src/main/jniLibs/
+
+# Release signing credentials must never be committed
+*.keystore
+keystore.properties
