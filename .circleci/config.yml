@@ -1,18 +1,19 @@
 version: 2.1
 
 # TetherVault CI pipeline: builds debug and release APKs.
-# The tun2socks native libraries are downloaded at build time so the
-# (potentially large) .so files never need to be committed to Git.
+# The tun2socks native library is compiled from source with the Android
+# NDK on every run, so no .so files are stored in Git.
 
 jobs:
   build:
     docker:
       - image: cimg/android:2024.01
-    # Android + R8 builds are memory hungry. On the CircleCI free plan,
-    # remove this line to fall back to the default `medium` class.
+    # Android + R8 + NDK builds are memory hungry. On the CircleCI free
+    # plan, remove this line to fall back to the default `medium` class.
     resource_class: large
     environment:
       GRADLE_OPTS: -Dorg.gradle.daemon=false
+      ANDROID_NDK_VERSION: 27.2.12479018
     steps:
       - checkout
 
@@ -23,76 +24,36 @@ jobs:
             - gradle-v1
 
       - run:
-          name: Install Android SDK components
+          name: Install Android SDK and NDK components
           command: |
             yes | sdkmanager --licenses > /dev/null 2>&1 || true
-            sdkmanager "platforms;android-36" "build-tools;36.0.0" > /dev/null
+            sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;${ANDROID_NDK_VERSION}" > /dev/null
+          no_output_timeout: 15m
 
       - run:
-          name: Download and Setup tun2socks
+          name: Build tun2socks from source via NDK
           command: |
-            set -u
+            set -euo pipefail
 
-            ARM64_DIR="app/src/main/jniLibs/arm64-v8a"
-            ARM32_DIR="app/src/main/jniLibs/armeabi-v7a"
-            mkdir -p "$ARM64_DIR" "$ARM32_DIR"
+            export ANDROID_NDK_HOME="${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}"
+            export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+            export PATH="${ANDROID_NDK_HOME}:${PATH}"
 
-            is_elf() {
-              [ "$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n')" = "7f454c46" ]
-            }
+            git clone --recursive https://github.com/heiher/hev-socks5-tunnel.git
+            cd hev-socks5-tunnel
 
-            download_and_install() {
-              local url="$1" dest_dir="$2" tmp_dir so_file
-              tmp_dir="$(mktemp -d)"
-              echo "  Downloading: $url"
-              if ! curl -fsSL --retry 2 --connect-timeout 15 --max-time 300 -o "$tmp_dir/package" "$url"; then
-                echo "  -> download failed"
-                rm -rf "$tmp_dir"
-                return 1
-              fi
-              case "$url" in
-                *.tar.gz|*.tgz) tar -xzf "$tmp_dir/package" -C "$tmp_dir" ;;
-                *.zip) unzip -qq -o "$tmp_dir/package" -d "$tmp_dir" ;;
-              esac
-              so_file="$(find "$tmp_dir" -name '*.so' -print -quit)"
-              if [ -z "$so_file" ] && [ -s "$tmp_dir/package" ] && is_elf "$tmp_dir/package"; then
-                so_file="$tmp_dir/package"
-              fi
-              if [ -n "$so_file" ]; then
-                cp "$so_file" "$dest_dir/libtun2socks.so"
-                echo "  -> installed $dest_dir/libtun2socks.so"
-                rm -rf "$tmp_dir"
-                return 0
-              fi
-              echo "  -> no shared object found in package"
-              rm -rf "$tmp_dir"
-              return 1
-            }
+            # Standalone Android.mk build: sources plus submodules
+            # (lwip, yaml, hev-task-system) for the two device ABIs.
+            ndk-build NDK_PROJECT_PATH=. APP_BUILD_SCRIPT=Android.mk \
+              APP_ABI="armeabi-v7a arm64-v8a" -j"$(nproc)"
 
-            # The app catches UnsatisfiedLinkError at runtime, so a pipeline
-            # never breaks because the real library is unavailable: a small
-            # placeholder file keeps the build green instead.
-            create_placeholder() {
-              local dest="$1"
-              echo "  -> WARNING: no usable prebuilt library found, creating placeholder $dest"
-              printf 'TetherVault placeholder for libtun2socks.so\n' > "$dest"
-            }
-
-            # Point these at real prebuilt artifacts via CircleCI environment
-            # variables once a library matching Tun2SocksJniWrapper is built:
-            ARM64_URL="${TUN2SOCKS_ARM64_URL:-https://github.com/heiher/hev-socks5-tunnel/releases/latest/download/hev-socks5-tunnel-android-arm64.tar.gz}"
-            ARM32_URL="${TUN2SOCKS_ARMV7_URL:-https://github.com/heiher/hev-socks5-tunnel/releases/latest/download/hev-socks5-tunnel-android-arm.tar.gz}"
-
-            echo "==> arm64-v8a"
-            download_and_install "$ARM64_URL" "$ARM64_DIR" \
-              || create_placeholder "$ARM64_DIR/libtun2socks.so"
-
-            echo "==> armeabi-v7a"
-            download_and_install "$ARM32_URL" "$ARM32_DIR" \
-              || create_placeholder "$ARM32_DIR/libtun2socks.so"
+            mkdir -p ../app/src/main/jniLibs/arm64-v8a ../app/src/main/jniLibs/armeabi-v7a
+            cp libs/arm64-v8a/libhev-socks5-tunnel.so ../app/src/main/jniLibs/arm64-v8a/
+            cp libs/armeabi-v7a/libhev-socks5-tunnel.so ../app/src/main/jniLibs/armeabi-v7a/
 
             echo "==> jniLibs ready:"
-            find app/src/main/jniLibs -type f -exec ls -la {} \;
+            ls -la ../app/src/main/jniLibs/*/
+          no_output_timeout: 30m
 
       - run:
           name: Build Debug APK
