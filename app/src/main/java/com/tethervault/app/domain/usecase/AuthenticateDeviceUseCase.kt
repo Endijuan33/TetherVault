@@ -5,6 +5,7 @@ import com.tethervault.app.domain.model.ConnectedDevice
 import com.tethervault.app.domain.repository.AccessLogRepository
 import com.tethervault.app.domain.repository.ConnectedDeviceRepository
 import com.tethervault.app.domain.repository.VoucherRepository
+import com.tethervault.app.util.ArpResolver
 import javax.inject.Inject
 
 class AuthenticateDeviceUseCase @Inject constructor(
@@ -26,8 +27,7 @@ class AuthenticateDeviceUseCase @Inject constructor(
 
         val existingDevice = connectedDeviceRepository.findByIpAddress(ipAddress)
         val device = (existingDevice ?: ConnectedDevice(
-            // MAC address resolution from the TUN subnet comes in a later phase.
-            macAddress = UNKNOWN_MAC_PREFIX + ipAddress,
+            macAddress = resolveMacAddress(ipAddress),
             ipAddress = ipAddress,
             deviceName = "Unknown device",
             lastSeen = System.currentTimeMillis()
@@ -51,9 +51,10 @@ class AuthenticateDeviceUseCase @Inject constructor(
         return Result.success(true)
     }
 
-    private companion object {
-        const val UNKNOWN_MAC_PREFIX = "unknown:"
-    }
+    // /proc/net/arp is restricted on many Android 10+ builds; fall back to a
+    // stable per-IP placeholder so the device stays addressable in the UI.
+    private fun resolveMacAddress(ipAddress: String): String =
+        ArpResolver.getMacFromIp(ipAddress) ?: "unknown:$ipAddress"
 }
 
 sealed class VoucherException(message: String) : Exception(message) {
