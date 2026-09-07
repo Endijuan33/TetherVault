@@ -1,25 +1,49 @@
 # TetherVault
 
-**TetherVault** is an Android application that turns your device into a voucher-based internet sharing hotspot. It combines a Wi-Fi Direct Group Owner (hotspot), a local VPN tunnel (TUN interface) with `hev-socks5-tunnel` routing, a captive portal with voucher authentication, real bidirectional TCP forwarding for authenticated clients, and a reactive management UI — all built with Kotlin and Jetpack Compose.
+**TetherVault** turns an Android device into a voucher-based Wi-Fi hotspot in the spirit of paid public Wi-Fi services: one button starts the hotspot, guests scan a QR code (or type the shown URL) to reach the voucher login page, and every login, device, and voucher is managed from a reactive dashboard.
+
+## The One-Button Flow
+
+**Start Hotspot → guest connects → guest scans the QR / opens the login page → enters voucher code → device is registered and authorized.**
+
+There is deliberately **no separate "Start VPN" step** in the user flow: a single press of Start Hotspot brings up the Wi-Fi Direct group, the captive portal server, and the voucher login page together, and stopping the hotspot tears them all down.
 
 ## Features
 
 ### Implemented
-- **Configurable Hotspot** — the SSID and security mode (Open or WPA2/WPA3-PSK) are configurable in the Settings tab and persisted with DataStore. In Open mode the network effectively joins without a secret, making the voucher portal the only gate to the internet (Wi-Fi Direct mandates WPA2 on the radio, so a public passphrase is applied transparently). Changes apply on the next hotspot start.
+- **One-Button Hotspot** — a single Start/Stop button brings up everything: the Wi-Fi Direct group (Group Owner mode) with the SSID/passphrase/security configured in Settings, the captive portal server, and the voucher login page. Errors surface with a Retry action.
+- **Operator Card with QR Code** — while the hotspot runs, the Home screen shows the SSID, the password (or the shared public password in Open mode), the portal URL, and a scannable QR code that opens the voucher login page on client devices.
+- **Configurable Hotspot** — SSID and security mode (Open or WPA2/WPA3-PSK) are configurable in the Settings tab and persisted with DataStore. In Open mode joining requires no secret knowledge (a shared public passphrase is applied because Wi-Fi Direct mandates WPA2 on the radio); the voucher portal is the only real gate. Changes apply on the next hotspot start.
 - **Persistent Foreground Service** — the hotspot runs inside a stable foreground service (`connectedDevice` type) with a persistent notification and a **Stop Hotspot** action button.
-- **VPN / TUN Interface** — an `android.net.VpnService` captures device traffic into a TUN interface (`10.0.0.2/24`, default route, DNS `8.8.8.8`, MTU 1500).
-- **Native Routing (hev-socks5-tunnel)** — the library is compiled from source with the Android NDK by CI; the Kotlin bridge (`TProxyStartService`/`TProxyStopService`) starts the tunnel via a generated YAML config and routes TUN traffic to the local proxy as SOCKS5.
-- **Captive Portal** — a pure `java.io` server answering on two ports: SOCKS5 on 1080 for tunneled traffic and a plain-HTTP login page on 8080 reachable directly at the group owner's address (e.g. `http://192.168.49.1:8080`), which starts together with the hotspot and validates voucher codes against the Room database.
-- **Real TCP Forwarding** — authenticated clients get a genuine bidirectional pipe: SOCKS5 CONNECT requests are parsed (IPv4 / domain / IPv6 destinations) and both streams are forwarded with coroutines.
+- **Voucher Captive Portal** — a pure `java.io` HTTP server on port 8080 (reachable directly at the group owner's address, e.g. `http://192.168.49.1:8080`) serving the login form and validating voucher codes against the Room database: exists, unused, unexpired.
 - **Voucher Management** — generate with a duration picker (1 hour / 24 hours / 7 days / custom hours; 8-character secure random codes), list with AVAILABLE / USED / EXPIRED status, copy-to-clipboard, and delete with confirmation dialogs.
 - **Device Management** — live list of connected clients with authentication status, up/down data usage, MAC addresses resolved from the kernel ARP table, and access revocation with confirmation.
-- **Access Log** — every voucher login and device revocation is recorded in Room and shown in a live history list (green LOGIN / red REVOKED).
+- **Access Log** — every voucher login and device revocation is recorded in Room and shown in a live history list (green LOGIN / red REVOKED) on the Settings tab.
 - **Reactive UI** — all lists are backed by Room `Flow` → `StateFlow`, so every change (generate, login via portal, revoke) updates the UI instantly.
-- **CI/CD** — CircleCI builds the native library from source and produces debug + release APKs as artifacts on every push.
+- **CI/CD** — CircleCI and GitHub Actions build the native tun2socks library from source and publish APKs (see CI/CD).
+
+### Experimental / Dormant
+- **VpnService + hev-socks5-tunnel stack** — a complete TUN/VPN tunnel, SOCKS5 proxy with bidirectional TCP forwarding, and the tun2socks JNI bridge are implemented and CI-built but intentionally kept out of the user flow (see Platform Constraints). They are the foundation for a future rooted mode that can actually forward client traffic.
 
 ### Planned
-- UDP forwarding (SOCKS5 `UDP ASSOCIATE`) — currently only TCP `CONNECT` is supported.
-- End-to-end validation on physical devices.
+- Rooted mode: force client traffic through the voucher-gated tunnel (iptables redirect) to make vouchers gate real internet access.
+
+## Platform Constraints (Architecture Decision Record)
+
+These were verified against the Android 33/35/36 SDK stubs, the AOSP framework source, and on-device testing:
+
+| Capability | Wi-Fi Direct group | Local-only hotspot | Tethered hotspot |
+|---|---|---|---|
+| Custom SSID | ✅ but the `DIRECT-` prefix is mandatory (Wi-Fi Alliance P2P rule) | ❌ SSID/passphrase setters are `@SystemApi`; the public `SoftApConfiguration.Builder` only exposes `setChannels` | ❌ not a public API (system apps only) |
+| Open (passwordless) network | ❌ WPA2-PSK is mandated by the P2P specification | ❌ framework rejects open local-only configurations | ❌ |
+| Route client traffic through the app | ❌ Android explicitly routes tethered/P2P client traffic **around** `VpnService`; there is no public API to include it | ❌ by design ("local only") | ❌ |
+
+Consequences for the product:
+
+- The SSID always starts with `DIRECT-` (branding goes after the prefix).
+- "Open" mode means a user-configurable shared public passphrase — not a literal open network. Phones joining via the Wi-Fi Direct flow usually skip the password prompt entirely (WPS).
+- The OS-native "Sign in to network" auto-popup cannot be triggered by an app, because the client's connectivity probes never traverse the app's servers (the app also cannot bind ports 53/80/443). Guests reach the login page via the QR code or URL instead.
+- Granting internet to authorized clients requires kernel-level traffic redirection, which needs a rooted device. The voucher system currently registers and authorizes devices (the full management/gating workflow) and is the gate that a future rooted forwarding layer would enforce.
 
 ## Architecture
 
@@ -148,12 +172,10 @@ Download the APKs from the repo's **Releases** tab (Nightly prerelease for the l
 
 ### How It Works
 
-1. **Home → Start Hotspot** — requests runtime permissions (nearby devices / notifications on Android 13+, location below), starts the foreground service, and creates the Wi-Fi Direct group using the SSID/passphrase/security configured in Settings (custom credentials require Android 10+; older devices fall back to system-generated values). SSID and password (or an "Open network" badge) appear on screen.
-2. **Home → Start VPN** — triggers the system VPN consent dialog (`VpnService.prepare`), then establishes the TUN interface, starts the local proxy server, writes `tun2socks_config.yaml`, and launches the native tunnel.
-3. **Client connects** — the login page is reachable directly at `http://<group-owner-address>:8080` (the address is also shown on the Home screen while the hotspot runs). Tunneled traffic arrives at the local proxy as SOCKS5 on port 1080; unauthenticated SOCKS5 clients get the portal via a success reply plus redirect. Note: Android deliberately routes tethered/hotspot client traffic around VpnService (there is no public API to include it — verified against API 36), so the OS-native "Login to network" auto-popup and voucher-gated internet forwarding both require the traffic to be forced through the tunnel, which is only possible with root.
-4. **Voucher login** — the client submits a voucher code; it is validated against Room (exists, unused, unexpired). On success the voucher is marked used, the client's MAC is resolved from `/proc/net/arp` (fallback `unknown:<ip>`), and the device becomes authenticated — recorded as a LOGIN access log entry.
-5. **Authenticated traffic** — subsequent SOCKS5 `CONNECT` requests are parsed (IPv4 / domain / IPv6 destination) and piped bidirectionally to the real internet.
-6. **Manage** — generate duration-picked vouchers (FAB on the Vouchers tab), copy codes, revoke devices from the Devices tab (recorded as REVOKED), and review history on the Access Log tab. All lists update reactively.
+1. **Home → Start Hotspot** — requests runtime permissions (nearby devices / notifications on Android 13+, location below), starts the foreground service, and creates the Wi-Fi Direct group using the SSID/passphrase/security configured in Settings (custom credentials require Android 10+; older devices fall back to system-generated values). The captive portal server starts together with the hotspot. The Home screen shows the SSID, password (or public password), the portal URL, and a QR code linking to it.
+2. **Guest connects** — the guest joins the SSID (phones via Wi-Fi Direct usually without a password prompt; laptops with the shown passphrase) and scans the QR code or opens `http://<group-owner-address>:8080` to reach the login page.
+3. **Voucher login** — the guest submits a voucher code; it is validated against Room (exists, unused, unexpired). On success the voucher is marked used, the guest's MAC is resolved from `/proc/net/arp` (fallback `unknown:<ip>`), and the device becomes authenticated — recorded as a LOGIN access log entry and visible on the Devices tab.
+4. **Manage** — generate duration-picked vouchers (FAB on the Vouchers tab), copy codes, revoke devices from the Devices tab (recorded as REVOKED), review history on the Settings tab, and adjust the hotspot SSID/security there too. All lists update reactively.
 
 ## Permissions
 

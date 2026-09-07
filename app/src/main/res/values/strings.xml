@@ -13,18 +13,16 @@
     <string name="home_status_error">Hotspot error: %1$s</string>
     <string name="home_action_start">Start Hotspot</string>
     <string name="home_action_stop">Stop Hotspot</string>
+    <string name="home_action_retry">Retry</string>
     <string name="home_ssid_label">SSID (Network Name)</string>
     <string name="home_password_label">Password</string>
     <string name="home_public_password_label">Public Wi-Fi password — anyone may use it</string>
     <string name="home_open_network">Open network</string>
     <string name="home_voucher_hint">Internet access requires a valid voucher. Login page: %1$s</string>
+    <string name="home_portal_title">Voucher login page</string>
+    <string name="home_portal_qr_desc">QR code linking to the voucher login page</string>
+    <string name="home_portal_scan_hint">Scan this code on a client device to open the login page</string>
     <string name="home_permissions_required">Required permissions must be granted before the hotspot can be started. Tap the button to request them.</string>
-    <string name="home_action_start_vpn">Start VPN</string>
-    <string name="home_action_stop_vpn">Stop VPN</string>
-    <string name="vpn_status_idle">VPN is inactive</string>
-    <string name="vpn_status_starting">Starting VPN…</string>
-    <string name="vpn_status_active">VPN is active (TUN interface established)</string>
-    <string name="vpn_status_error">VPN error: %1$s</string>
 
     <string name="devices_title">Connected Devices</string>
     <string name="devices_empty_title">No devices connected</string>

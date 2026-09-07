@@ -1,12 +1,11 @@
 package com.tethervault.app.presentation.main
 
 import android.Manifest
-import android.app.Activity
 import android.content.pm.PackageManager
-import android.net.VpnService
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,12 +16,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -31,6 +32,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -41,9 +44,9 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tethervault.app.R
 import com.tethervault.app.domain.model.HotspotState
-import com.tethervault.app.domain.model.VpnState
 import com.tethervault.app.util.Constants
 import com.tethervault.app.util.P2pAddressResolver
+import com.tethervault.app.util.QrCodeGenerator
 
 @Composable
 fun HomeScreen(
@@ -60,19 +63,10 @@ fun HomeScreen(
         permissionsGranted = result.values.all { it }
     }
 
-    val vpnState by viewModel.vpnState.collectAsStateWithLifecycle()
-
-    val vpnPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            viewModel.startVpn()
-        }
-    }
-
     Column(
         modifier = modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -113,35 +107,10 @@ fun HomeScreen(
         ) {
             val labelRes = when (hotspotState) {
                 is HotspotState.Running, HotspotState.Starting -> R.string.home_action_stop
+                is HotspotState.Error -> R.string.home_action_retry
                 else -> R.string.home_action_start
             }
             Text(text = stringResource(labelRes))
-        }
-
-        Spacer(Modifier.height(24.dp))
-        VpnStatusSection(vpnState)
-        Spacer(Modifier.height(16.dp))
-        OutlinedButton(
-            onClick = {
-                when (vpnState) {
-                    VpnState.Running, VpnState.Starting -> viewModel.stopVpn()
-                    else -> {
-                        val prepareIntent = VpnService.prepare(context)
-                        if (prepareIntent != null) {
-                            vpnPermissionLauncher.launch(prepareIntent)
-                        } else {
-                            viewModel.startVpn()
-                        }
-                    }
-                }
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            val vpnLabelRes = when (vpnState) {
-                VpnState.Running, VpnState.Starting -> R.string.home_action_stop_vpn
-                else -> R.string.home_action_start_vpn
-            }
-            Text(text = stringResource(vpnLabelRes))
         }
     }
 }
@@ -173,28 +142,6 @@ private fun StatusSection(state: HotspotState) {
 }
 
 @Composable
-private fun VpnStatusSection(state: VpnState) {
-    when (state) {
-        VpnState.Idle -> StatusText(
-            text = stringResource(R.string.vpn_status_idle),
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        VpnState.Starting -> StatusText(
-            text = stringResource(R.string.vpn_status_starting),
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        VpnState.Running -> StatusText(
-            text = stringResource(R.string.vpn_status_active),
-            color = MaterialTheme.colorScheme.primary
-        )
-        is VpnState.Error -> StatusText(
-            text = stringResource(R.string.vpn_status_error, state.message),
-            color = MaterialTheme.colorScheme.error
-        )
-    }
-}
-
-@Composable
 private fun StatusText(text: String, color: androidx.compose.ui.graphics.Color) {
     Text(
         text = text,
@@ -206,6 +153,15 @@ private fun StatusText(text: String, color: androidx.compose.ui.graphics.Color) 
 
 @Composable
 private fun CredentialsCard(state: HotspotState.Running) {
+    val portalAddress = remember {
+        P2pAddressResolver.getGroupOwnerAddress()
+            ?: P2pAddressResolver.FALLBACK_GROUP_OWNER_IP
+    }
+    val portalUrl = remember(portalAddress) {
+        "http://$portalAddress:${Constants.PORTAL_HTTP_PORT}"
+    }
+    val portalQr = remember(portalUrl) { QrCodeGenerator.generate(portalUrl) }
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
@@ -254,16 +210,36 @@ private fun CredentialsCard(state: HotspotState.Running) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Spacer(Modifier.height(16.dp))
-            val portalAddress = remember {
-                P2pAddressResolver.getGroupOwnerAddress()
-                    ?: P2pAddressResolver.FALLBACK_GROUP_OWNER_IP
-            }
+            Spacer(Modifier.height(20.dp))
             Text(
-                text = stringResource(
-                    R.string.home_voucher_hint,
-                    "http://$portalAddress:${Constants.PORTAL_HTTP_PORT}"
-                ),
+                text = stringResource(R.string.home_portal_title),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = portalUrl,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            portalQr?.let { qr ->
+                Spacer(Modifier.height(12.dp))
+                Image(
+                    bitmap = qr.asImageBitmap(),
+                    contentDescription = stringResource(R.string.home_portal_qr_desc),
+                    modifier = Modifier
+                        .size(176.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                )
+                Text(
+                    text = stringResource(R.string.home_portal_scan_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = stringResource(R.string.home_voucher_hint, portalUrl),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
