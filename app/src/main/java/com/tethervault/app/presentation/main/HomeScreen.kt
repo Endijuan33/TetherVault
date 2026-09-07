@@ -42,6 +42,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tethervault.app.R
 import com.tethervault.app.domain.model.HotspotState
 import com.tethervault.app.domain.model.VpnState
+import com.tethervault.app.util.Constants
+import com.tethervault.app.util.P2pAddressResolver
 
 @Composable
 fun HomeScreen(
@@ -247,8 +249,15 @@ private fun CredentialsCard(state: HotspotState.Running) {
                 )
             }
             Spacer(Modifier.height(16.dp))
+            val portalAddress = remember {
+                P2pAddressResolver.getGroupOwnerAddress()
+                    ?: P2pAddressResolver.FALLBACK_GROUP_OWNER_IP
+            }
             Text(
-                text = stringResource(R.string.home_voucher_hint),
+                text = stringResource(
+                    R.string.home_voucher_hint,
+                    "http://$portalAddress:${Constants.PORTAL_HTTP_PORT}"
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center

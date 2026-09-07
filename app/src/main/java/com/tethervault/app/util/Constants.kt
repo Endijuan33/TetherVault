@@ -18,4 +18,5 @@ object Constants {
 
     const val PROXY_HOST = "127.0.0.1"
     const val PROXY_PORT = 1080
+    const val PORTAL_HTTP_PORT = 8080
 }

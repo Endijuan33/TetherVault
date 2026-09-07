@@ -16,7 +16,7 @@
     <string name="home_ssid_label">SSID (Network Name)</string>
     <string name="home_password_label">Password</string>
     <string name="home_open_network">Open network</string>
-    <string name="home_voucher_hint">Internet access requires a valid voucher.</string>
+    <string name="home_voucher_hint">Internet access requires a valid voucher. Login page: %1$s</string>
     <string name="home_permissions_required">Required permissions must be granted before the hotspot can be started. Tap the button to request them.</string>
     <string name="home_action_start_vpn">Start VPN</string>
     <string name="home_action_stop_vpn">Stop VPN</string>

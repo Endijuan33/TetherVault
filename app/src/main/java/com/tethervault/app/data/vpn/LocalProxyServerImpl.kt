@@ -37,11 +37,14 @@ class LocalProxyServerImpl @Inject constructor(
 ) : LocalProxyServer {
 
     override val port: Int = Constants.PROXY_PORT
+    override val portalPort: Int = Constants.PORTAL_HTTP_PORT
 
     private val serverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private var serverJob: Job? = null
-    private var serverSocket: ServerSocket? = null
+    private var socks5Job: Job? = null
+    private var portalJob: Job? = null
+    private var socks5Socket: ServerSocket? = null
+    private var portalSocket: ServerSocket? = null
 
     private data class Socks5Request(
         val command: Byte,
@@ -50,43 +53,66 @@ class LocalProxyServerImpl @Inject constructor(
     )
 
     override fun start() {
-        if (serverJob?.isActive == true) return
-        serverJob = serverScope.launch {
-            try {
-                val socket = ServerSocket(port)
-                serverSocket = socket
-                Log.i(TAG, "Proxy server running on port $port")
-                while (currentCoroutineContext().isActive) {
-                    val client = socket.accept()
-                    serverScope.launch { handleClient(client) }
-                }
-            } catch (e: Exception) {
-                if (currentCoroutineContext().isActive) {
-                    Log.w(TAG, "Proxy server stopped unexpectedly: ${e.message}")
-                }
-            } finally {
-                runCatching { serverSocket?.close() }
-                serverSocket = null
-                Log.i(TAG, "Proxy server stopped")
-            }
+        // SOCKS5 listener for tunneled traffic (started alongside the VPN).
+        if (socks5Job?.isActive != true) {
+            socks5Job = serverScope.launch { acceptLoop(socks5 = true) }
+        }
+        // Plain-HTTP portal listener so the login page is reachable directly
+        // (e.g. http://192.168.49.1:8080/portal) as soon as the hotspot runs,
+        // with or without the VPN.
+        if (portalJob?.isActive != true) {
+            portalJob = serverScope.launch { acceptLoop(socks5 = false) }
         }
     }
 
     override fun stop() {
-        serverJob?.cancel()
-        serverJob = null
-        // Closing the socket unblocks a pending accept.
-        runCatching { serverSocket?.close() }
-        serverSocket = null
+        socks5Job?.cancel()
+        socks5Job = null
+        portalJob?.cancel()
+        portalJob = null
+        // Closing the sockets unblocks pending accepts.
+        runCatching { socks5Socket?.close() }
+        socks5Socket = null
+        runCatching { portalSocket?.close() }
+        portalSocket = null
     }
 
-    private suspend fun handleClient(client: Socket) {
+    private suspend fun acceptLoop(socks5: Boolean) {
+        var socket: ServerSocket? = null
+        try {
+            socket = ServerSocket(if (socks5) port else portalPort)
+            if (socks5) socks5Socket = socket else portalSocket = socket
+            val label = if (socks5) "SOCKS5 proxy" else "portal"
+            Log.i(TAG, "$label server running on port ${socket.localPort}")
+            while (currentCoroutineContext().isActive) {
+                val client = socket.accept()
+                serverScope.launch { handleClient(client, socks5) }
+            }
+        } catch (e: Exception) {
+            if (currentCoroutineContext().isActive) {
+                Log.w(TAG, "Server stopped unexpectedly: ${e.message}")
+            }
+        } finally {
+            if (socks5) socks5Socket = null else portalSocket = null
+            runCatching { socket?.close() }
+            Log.i(TAG, "Server stopped")
+        }
+    }
+
+    private suspend fun handleClient(client: Socket, socks5: Boolean) {
         var remote: Socket? = null
         try {
             client.soTimeout = SOCKET_TIMEOUT_MS
             val pushbackInput =
                 PushbackInputStream(client.getInputStream(), SOCKS5_GREETING_SIZE)
             val rawOutput = client.getOutputStream()
+
+            if (!socks5) {
+                // Direct HTTP access (portal listener): no SOCKS5 handshake,
+                // the client's own IP is its real address on the hotspot.
+                serveCaptivePortal(pushbackInput, rawOutput, client)
+                return
+            }
 
             val greeting = ByteArray(SOCKS5_GREETING_SIZE)
             val greetingLength = readFully(pushbackInput, greeting)

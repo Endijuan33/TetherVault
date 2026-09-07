@@ -12,6 +12,7 @@ import com.tethervault.app.domain.model.AppSettings
 import com.tethervault.app.domain.model.HotspotSecurity
 import com.tethervault.app.domain.model.HotspotState
 import com.tethervault.app.domain.repository.SettingsRepository
+import com.tethervault.app.domain.vpn.LocalProxyServer
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -31,7 +32,8 @@ import kotlin.coroutines.resumeWithException
 @Singleton
 class HotspotManagerImpl @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val localProxyServer: LocalProxyServer
 ) : HotspotManager {
 
     private val _hotspotState = MutableStateFlow<HotspotState>(HotspotState.Idle)
@@ -77,6 +79,11 @@ class HotspotManagerImpl @Inject constructor(
                             "Reading hotspot credentials requires Android 8.1 or newer"
                         )
                     } else {
+                        // Start the captive portal listeners alongside the
+                        // hotspot so clients can reach the login page
+                        // (http://<group-owner-ip>:8080/portal) even before
+                        // the VPN is started.
+                        localProxyServer.start()
                         _hotspotState.value = HotspotState.Running(
                             ssid = group.networkName ?: "DIRECT-unknown",
                             password = group.passphrase
