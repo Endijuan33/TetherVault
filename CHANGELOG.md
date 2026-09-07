@@ -5,6 +5,7 @@ _Generated automatically from commit messages. Do not edit by hand._
 ## Unreleased
 
 ### Changes
+- Serve the captive portal on port 8080 directly from the hotspot
 - Trigger the OS captive portal flow with voucher login redirects
 - Make hotspot SSID and security configurable with voucher-only gating
 - Update README to match the current implementation
