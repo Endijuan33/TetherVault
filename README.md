@@ -59,7 +59,7 @@ Cross-cutting concerns are wired with **Hilt** dependency injection. The hotspot
 | Async | Kotlin Coroutines + Flow |
 | Networking | `WifiP2pManager`, `VpnService`, raw `java.io` sockets, hev-socks5-tunnel (NDK) |
 | Build | AGP 8.10.1, Gradle 8.14.2, Version Catalog, R8/ProGuard |
-| CI/CD | CircleCI (NDK r27.2, tun2socks built from source) |
+| CI/CD | CircleCI + GitHub Actions (NDK r27.2, tun2socks built from source) |
 
 **Min SDK 26 · Target/Compile SDK 36**
 
@@ -134,6 +134,17 @@ For local development, `./setup-native.sh` downloads the upstream prebuilt Andro
 ```
 
 Keystores and `keystore.properties` are gitignored.
+
+## CI/CD
+
+Two GitHub Actions workflows automate the full build (in addition to the existing CircleCI pipeline):
+
+- **Android Build** (`.github/workflows/android-build.yml`) — runs on every push to `main` and on pull requests: compiles `libhev-socks5-tunnel.so` from source with the NDK, assembles debug and release APKs, verifies the native libraries are packaged, uploads the APKs as run artifacts, regenerates `CHANGELOG.md` from the commit history, and (on pushes) publishes a rolling **Nightly Build** prerelease with the APKs attached.
+- **Android Release** (`.github/workflows/android-release.yml`) — runs when a tag like `v1.0.0` is pushed: performs the same build, regenerates the changelog (the tag becomes its own version section), moves the tag onto the changelog commit, extracts that version's section as the release notes, and creates a full GitHub **Release** with both APKs.
+
+The changelog (`scripts/generate-changelog.sh`) is fully regenerated on every run — grouped into Features / Fixes / Changes by conventional-commit type — so it can never drift from the commit history. Changelog commits use `[skip ci]` to avoid build loops.
+
+Download the APKs from the repo's **Releases** tab (Nightly prerelease for the latest `main`, tagged releases for versions); each workflow run also keeps per-run artifacts for 30 (build) / 90 (release) days.
 
 ### How It Works
 
