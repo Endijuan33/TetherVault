@@ -232,7 +232,13 @@ private fun CredentialsCard(state: HotspotState.Running) {
             Spacer(Modifier.height(12.dp))
             if (state.password != null) {
                 Text(
-                    text = stringResource(R.string.home_password_label),
+                    text = stringResource(
+                        if (state.isPublicPassword) {
+                            R.string.home_public_password_label
+                        } else {
+                            R.string.home_password_label
+                        }
+                    ),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

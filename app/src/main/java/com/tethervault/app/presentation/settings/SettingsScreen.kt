@@ -63,8 +63,7 @@ fun SettingsScreen(
     }
     var passphrase by remember(settings) { mutableStateOf(settings?.hotspotPassphrase.orEmpty()) }
 
-    val saveEnabled = ssid.isNotBlank() &&
-        (security == HotspotSecurity.OPEN || passphrase.length in 8..63)
+    val saveEnabled = ssid.isNotBlank() && passphrase.length in 8..63
 
     Scaffold(
         modifier = modifier,
@@ -165,22 +164,41 @@ private fun HotspotConfigCard(
                     label = { Text(stringResource(R.string.settings_security_wpa2)) }
                 )
             }
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = passphrase,
+                onValueChange = onPassphraseChange,
+                label = {
+                    Text(
+                        text = stringResource(
+                            if (security == HotspotSecurity.OPEN) {
+                                R.string.settings_public_passphrase_label
+                            } else {
+                                R.string.settings_passphrase_label
+                            }
+                        )
+                    )
+                },
+                supportingText = {
+                    Text(
+                        text = stringResource(
+                            if (security == HotspotSecurity.OPEN) {
+                                R.string.settings_public_passphrase_support
+                            } else {
+                                R.string.settings_passphrase_support
+                            }
+                        )
+                    )
+                },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
             if (security == HotspotSecurity.OPEN) {
                 Spacer(Modifier.height(8.dp))
                 Text(
                     text = stringResource(R.string.settings_open_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else {
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = passphrase,
-                    onValueChange = onPassphraseChange,
-                    label = { Text(stringResource(R.string.settings_passphrase_label)) },
-                    supportingText = { Text(stringResource(R.string.settings_passphrase_support)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
                 )
             }
             Spacer(Modifier.height(16.dp))

@@ -50,17 +50,16 @@ class SettingsRepositoryImpl @Inject constructor(
         require(normalizedSsid.length <= MAX_SSID_LENGTH) {
             "SSID is too long (max $MAX_SSID_LENGTH characters including the DIRECT- prefix)"
         }
-        if (security == HotspotSecurity.WPA2_PSK) {
-            require(passphrase.length in MIN_PASSPHRASE_LENGTH..MAX_PASSPHRASE_LENGTH) {
-                "Passphrase must be $MIN_PASSPHRASE_LENGTH-$MAX_PASSPHRASE_LENGTH characters"
-            }
+        // Wi-Fi Direct mandates WPA2-PSK, so a passphrase is required in both
+        // modes; in OPEN mode it is a shared public value by design.
+        require(passphrase.length in MIN_PASSPHRASE_LENGTH..MAX_PASSPHRASE_LENGTH) {
+            "Passphrase must be $MIN_PASSPHRASE_LENGTH-$MAX_PASSPHRASE_LENGTH characters"
         }
 
         context.settingsDataStore.edit { prefs ->
             prefs[KEY_HOTSPOT_SSID] = normalizedSsid
             prefs[KEY_HOTSPOT_SECURITY] = security.name
-            prefs[KEY_HOTSPOT_PASSPHRASE] =
-                if (security == HotspotSecurity.WPA2_PSK) passphrase else ""
+            prefs[KEY_HOTSPOT_PASSPHRASE] = passphrase
         }
     }
 

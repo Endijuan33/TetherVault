@@ -86,7 +86,8 @@ class HotspotManagerImpl @Inject constructor(
                         localProxyServer.start()
                         _hotspotState.value = HotspotState.Running(
                             ssid = group.networkName ?: "DIRECT-unknown",
-                            password = group.passphrase
+                            password = group.passphrase,
+                            isPublicPassword = settings.hotspotSecurity == HotspotSecurity.OPEN
                         )
                     }
                 }
@@ -159,9 +160,9 @@ class HotspotManagerImpl @Inject constructor(
     // Wi-Fi Direct group creation with a custom SSID/passphrase requires
     // WifiP2pConfig.Builder (API 29+); older devices fall back to the
     // system-generated group. Wi-Fi Direct groups are always WPA2-PSK per
-    // the P2P specification, so OPEN mode substitutes a well-known public
-    // passphrase: joining requires no secret and the voucher portal stays
-    // the only real gate to the internet.
+    // the P2P specification, so there is no truly passwordless join: in
+    // OPEN mode the passphrase is a user-configurable public value, leaving
+    // the voucher portal as the only real gate to the internet.
     private fun buildGroupConfig(settings: AppSettings): WifiP2pConfig? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             Log.i(
@@ -171,7 +172,8 @@ class HotspotManagerImpl @Inject constructor(
             return null
         }
         val passphrase = when (settings.hotspotSecurity) {
-            HotspotSecurity.OPEN -> PUBLIC_PASSPHRASE
+            HotspotSecurity.OPEN ->
+                settings.hotspotPassphrase.ifBlank { PUBLIC_PASSPHRASE }
             HotspotSecurity.WPA2_PSK -> settings.hotspotPassphrase
         }
         return WifiP2pConfig.Builder()

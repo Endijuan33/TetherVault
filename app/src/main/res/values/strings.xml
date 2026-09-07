@@ -15,6 +15,7 @@
     <string name="home_action_stop">Stop Hotspot</string>
     <string name="home_ssid_label">SSID (Network Name)</string>
     <string name="home_password_label">Password</string>
+    <string name="home_public_password_label">Public Wi-Fi password — anyone may use it</string>
     <string name="home_open_network">Open network</string>
     <string name="home_voucher_hint">Internet access requires a valid voucher. Login page: %1$s</string>
     <string name="home_permissions_required">Required permissions must be granted before the hotspot can be started. Tap the button to request them.</string>
@@ -61,7 +62,9 @@
     <string name="settings_security_wpa2">WPA2/WPA3-PSK</string>
     <string name="settings_passphrase_label">Passphrase</string>
     <string name="settings_passphrase_support">8–63 characters</string>
-    <string name="settings_open_hint">Anyone may join without a secret; internet access still requires a voucher. Wi-Fi Direct networks are always WPA2-encrypted, so a public password is applied automatically.</string>
+    <string name="settings_public_passphrase_label">Public passphrase</string>
+    <string name="settings_public_passphrase_support">8–63 characters. Shared openly with everyone joining.</string>
+    <string name="settings_open_hint">Wi-Fi Direct networks are always WPA2-encrypted (platform rule), so a shared public password is applied instead of a secret one — share it freely; internet access is still gated by vouchers. Phones joining via Wi-Fi Direct usually do not ask for it.</string>
     <string name="settings_save">Save hotspot settings</string>
     <string name="settings_saved">Hotspot settings saved. Restart the hotspot to apply.</string>
     <string name="settings_save_failed">Failed to save settings</string>
